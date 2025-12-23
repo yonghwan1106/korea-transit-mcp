@@ -273,9 +273,12 @@ async function getTransitInfo(location: string): Promise<string> {
   // 지하철, 따릉이 정보를 통합 조회
   let result = `📍 ${location} 주변 종합 교통정보\n\n`;
 
+  // "역" 접미사 처리 - "서초역" → "서초"로 변환하여 검색
+  const stationName = location.endsWith('역') ? location.slice(0, -1) : location;
+
   // 1. 지하철 정보
   try {
-    const subwayUrl = `http://swopenapi.seoul.go.kr/api/subway/${SEOUL_API_KEY}/json/realtimeStationArrival/0/5/${location}`;
+    const subwayUrl = `http://swopenapi.seoul.go.kr/api/subway/${SEOUL_API_KEY}/json/realtimeStationArrival/0/5/${stationName}`;
     const subwayRes = await axios.get(subwayUrl, { timeout: 10000 });
     const arrivals = subwayRes.data.realtimeArrivalList || [];
 
@@ -293,17 +296,20 @@ async function getTransitInfo(location: string): Promise<string> {
       result += `🚇 지하철: '${location}'역 도착정보 없음\n`;
     }
   } catch {
-    result += `🚇 지하철: '${location}' 검색 결과 없음\n`;
+    result += `🚇 지하철: '${stationName}' 검색 결과 없음\n`;
   }
 
   result += `\n`;
 
-  // 2. 따릉이 정보
+  // 2. 따릉이 정보 - "역"을 포함한 검색어로도 시도
   try {
     const bikeUrl = `http://openapi.seoul.go.kr:8088/${SEOUL_API_KEY}/json/bikeList/1/1000/`;
     const bikeRes = await axios.get(bikeUrl, { timeout: 10000 });
     const stations = bikeRes.data?.rentBikeStatus?.row || [];
-    const filtered = stations.filter((s: any) => s.stationName?.includes(location));
+    // "역" 포함/미포함 모두 검색
+    const filtered = stations.filter((s: any) =>
+      s.stationName?.includes(stationName) || s.stationName?.includes(location)
+    );
 
     if (filtered.length > 0) {
       result += `🚲 따릉이 대여소:\n`;
@@ -311,7 +317,7 @@ async function getTransitInfo(location: string): Promise<string> {
         result += `  - ${s.stationName}: ${s.parkingBikeTotCnt}대 대여가능\n`;
       });
     } else {
-      result += `🚲 따릉이: '${location}' 인근 대여소 없음\n`;
+      result += `🚲 따릉이: '${stationName}' 인근 대여소 없음\n`;
     }
   } catch {
     result += `🚲 따릉이: 정보 조회 실패\n`;
