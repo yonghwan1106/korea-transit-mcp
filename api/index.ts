@@ -225,56 +225,99 @@ async function searchBusStation(stationName: string): Promise<string> {
 
 async function getBikeStation(stationName: string): Promise<string> {
   try {
-    const url = `http://openapi.seoul.go.kr:8088/${SEOUL_API_KEY}/json/bikeList/1/100/`;
-    const response = await axios.get(url, { timeout: 5000 });
-    const stations = response.data?.rentBikeStatus?.row || [];
+    // 따릉이 대여소는 약 2,800개 - 여러 페이지 조회
+    const results: any[] = [];
+    const pageSize = 1000;
+    const totalPages = 3; // 약 3000개 커버
 
-    const filtered = stations.filter((s: any) =>
-      s.stationName?.includes(stationName)
-    );
+    for (let page = 1; page <= totalPages; page++) {
+      const startIdx = (page - 1) * pageSize + 1;
+      const endIdx = page * pageSize;
+      const url = `http://openapi.seoul.go.kr:8088/${SEOUL_API_KEY}/json/bikeList/${startIdx}/${endIdx}/`;
 
-    if (filtered.length === 0) {
-      throw new Error("대여소 없음");
+      try {
+        const response = await axios.get(url, { timeout: 10000 });
+        const rows = response.data?.rentBikeStatus?.row || [];
+
+        // 검색어가 포함된 대여소만 필터링하여 추가
+        const matched = rows.filter((s: any) => s.stationName?.includes(stationName));
+        results.push(...matched);
+
+        // 충분한 결과를 찾으면 조기 종료
+        if (results.length >= 20) break;
+
+        // API에서 더 이상 데이터가 없으면 종료
+        if (rows.length < pageSize) break;
+      } catch {
+        continue;
+      }
     }
 
-    const formattedStations = filtered.slice(0, 10).map((station: any) => ({
+    if (results.length === 0) {
+      return `🚲 '${stationName}' 따릉이 대여소 현황\n\n해당 지역에 따릉이 대여소를 찾을 수 없습니다.\n다른 키워드로 검색해 주세요.`;
+    }
+
+    const formattedStations = results.slice(0, 10).map((station: any) => ({
       대여소명: station.stationName,
       대여가능: `${station.parkingBikeTotCnt}대`,
       거치대수: `${station.rackTotCnt}개`,
     }));
 
-    return `🚲 '${stationName}' 따릉이 대여소 현황\n\n${JSON.stringify(formattedStations, null, 2)}`;
+    return `🚲 '${stationName}' 따릉이 대여소 현황 (${results.length}건 중 상위 10건)\n\n${JSON.stringify(formattedStations, null, 2)}`;
   } catch (error: any) {
-    // 샘플 데이터
-    const sampleBikes = [
-      { 대여소명: `${stationName}역 1번출구`, 대여가능: "12대", 거치대수: "20개" },
-      { 대여소명: `${stationName}역 2번출구`, 대여가능: "8대", 거치대수: "15개" },
-      { 대여소명: `${stationName} 사거리`, 대여가능: "5대", 거치대수: "10개" },
-    ];
-    return `🚲 '${stationName}' 따릉이 대여소 현황 (데모 데이터)\n\n${JSON.stringify(sampleBikes, null, 2)}\n\n⚠️ 참고: 서울 열린데이터 API 접속 불가로 데모 데이터를 표시합니다.`;
+    return `🚲 '${stationName}' 대여소 검색 실패\n\n⚠️ 오류: ${error.message}\n잠시 후 다시 시도해 주세요.`;
   }
 }
 
 async function getTransitInfo(location: string): Promise<string> {
-  // 항상 샘플 데이터 반환 (해외 서버에서 API 접속 불가)
-  const sampleTransit = `📍 ${location} 주변 교통정보 (데모 데이터)
+  // 지하철, 따릉이 정보를 통합 조회
+  let result = `📍 ${location} 주변 종합 교통정보\n\n`;
 
-🚇 지하철:
-  - 2호선 (외선): 3분 후 도착
-  - 2호선 (내선): 5분 후 도착
-  - 신분당선: 2분 후 도착
+  // 1. 지하철 정보
+  try {
+    const subwayUrl = `http://swopenapi.seoul.go.kr/api/subway/${SEOUL_API_KEY}/json/realtimeStationArrival/0/5/${location}`;
+    const subwayRes = await axios.get(subwayUrl, { timeout: 10000 });
+    const arrivals = subwayRes.data.realtimeArrivalList || [];
 
-🚌 버스:
-  - 146번: 곧 도착
-  - 360번: 5분 후
+    if (arrivals.length > 0) {
+      result += `🚇 지하철 도착정보:\n`;
+      arrivals.slice(0, 4).forEach((arr: any) => {
+        const line = arr.subwayId === "1001" ? "1호선" : arr.subwayId === "1002" ? "2호선" :
+          arr.subwayId === "1003" ? "3호선" : arr.subwayId === "1004" ? "4호선" :
+          arr.subwayId === "1005" ? "5호선" : arr.subwayId === "1006" ? "6호선" :
+          arr.subwayId === "1007" ? "7호선" : arr.subwayId === "1008" ? "8호선" :
+          arr.subwayId === "1009" ? "9호선" : arr.subwayId === "1077" ? "신분당선" : arr.subwayId;
+        result += `  - ${line} ${arr.updnLine} (${arr.bstatnNm}행): ${arr.arvlMsg2}\n`;
+      });
+    } else {
+      result += `🚇 지하철: '${location}'역 도착정보 없음\n`;
+    }
+  } catch {
+    result += `🚇 지하철: '${location}' 검색 결과 없음\n`;
+  }
 
-🚲 따릉이:
-  - ${location}역 1번출구: 12대 대여가능
-  - ${location}역 2번출구: 8대 대여가능
+  result += `\n`;
 
-⚠️ 참고: 서울 열린데이터 API 접속 불가로 데모 데이터를 표시합니다.`;
+  // 2. 따릉이 정보
+  try {
+    const bikeUrl = `http://openapi.seoul.go.kr:8088/${SEOUL_API_KEY}/json/bikeList/1/1000/`;
+    const bikeRes = await axios.get(bikeUrl, { timeout: 10000 });
+    const stations = bikeRes.data?.rentBikeStatus?.row || [];
+    const filtered = stations.filter((s: any) => s.stationName?.includes(location));
 
-  return sampleTransit;
+    if (filtered.length > 0) {
+      result += `🚲 따릉이 대여소:\n`;
+      filtered.slice(0, 3).forEach((s: any) => {
+        result += `  - ${s.stationName}: ${s.parkingBikeTotCnt}대 대여가능\n`;
+      });
+    } else {
+      result += `🚲 따릉이: '${location}' 인근 대여소 없음\n`;
+    }
+  } catch {
+    result += `🚲 따릉이: 정보 조회 실패\n`;
+  }
+
+  return result;
 }
 
 // 도구 실행
