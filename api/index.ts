@@ -107,19 +107,23 @@ const SAMPLE_SUBWAY_DATA: Record<string, any[]> = {
 // 도구 실행 함수들
 async function getSubwayArrival(stationName: string): Promise<string> {
   try {
-    const url = `http://swopenapi.seoul.go.kr/api/subway/${SEOUL_API_KEY}/json/realtimeStationArrival/0/10/${encodeURIComponent(stationName)}`;
-    const response = await axios.get(url, { timeout: 5000 });
+    // URL 인코딩 없이 한글 직접 사용
+    const url = `http://swopenapi.seoul.go.kr/api/subway/${SEOUL_API_KEY}/json/realtimeStationArrival/0/10/${stationName}`;
+    const response = await axios.get(url, { timeout: 15000 });
 
-    if (response.data.errorMessage) {
-      const errMsg = response.data.errorMessage;
-      if (errMsg.code !== "INFO-000") {
-        throw new Error(errMsg.message);
-      }
+    // 디버깅: API 응답 확인
+    const responseKeys = Object.keys(response.data || {});
+    const errorMsg = response.data.errorMessage;
+
+    if (errorMsg && errorMsg.code !== "INFO-000") {
+      throw new Error(`API 에러: ${errorMsg.code} - ${errorMsg.message}`);
     }
 
     const arrivals = response.data.realtimeArrivalList || [];
     if (arrivals.length === 0) {
-      throw new Error("도착 정보 없음");
+      // 에러 응답 상세 확인
+      const errDetail = response.data.message || response.data.developerMessage || JSON.stringify(response.data).substring(0, 200);
+      throw new Error(`API응답: ${errDetail}`);
     }
 
     const formattedArrivals = arrivals.slice(0, 8).map((arr: any) => ({
@@ -136,9 +140,10 @@ async function getSubwayArrival(stationName: string): Promise<string> {
 
     return `🚇 ${stationName}역 실시간 도착정보\n\n${JSON.stringify(formattedArrivals, null, 2)}`;
   } catch (error: any) {
-    // API 실패 시 샘플 데이터로 폴백
+    // API 실패 시 샘플 데이터로 폴백 (에러 상세 포함)
     const sampleData = SAMPLE_SUBWAY_DATA[stationName] || SAMPLE_SUBWAY_DATA["강남"];
-    return `🚇 ${stationName}역 도착정보 (데모 데이터)\n\n${JSON.stringify(sampleData, null, 2)}\n\n⚠️ 참고: 서울 열린데이터 API 접속 불가로 데모 데이터를 표시합니다.`;
+    const errorDetail = error.code || error.message || String(error);
+    return `🚇 ${stationName}역 도착정보 (데모 데이터)\n\n${JSON.stringify(sampleData, null, 2)}\n\n⚠️ API 오류: ${errorDetail}`;
   }
 }
 
