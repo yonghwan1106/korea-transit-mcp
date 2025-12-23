@@ -1,0 +1,42 @@
+{
+  "name": "korea-transit-mcp",
+  "version": "1.0.0",
+  "description": "한국 실시간 대중교통 정보 MCP 서버 - 버스/지하철 도착정보, 공공자전거 현황",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node --esm src/index.ts",
+    "watch": "nodemon --exec ts-node --esm src/index.ts"
+  },
+  "keywords": [
+    "mcp",
+    "korea",
+    "transit",
+    "bus",
+    "subway",
+    "realtime",
+    "kakao",
+    "playmcp"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.25.1",
+    "axios": "^1.13.2",
+    "dotenv": "^17.2.3",
+    "express": "^4.22.1",
+    "zod": "^4.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/node": "^25.0.3",
+    "nodemon": "^3.1.11",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
