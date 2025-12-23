@@ -8,13 +8,7 @@ import axios from "axios";
 const SEOUL_API_KEY = process.env.SEOUL_API_KEY || "sample";
 const DATA_GO_KR_API_KEY = process.env.DATA_GO_KR_API_KEY || "";
 
-// 전역 서버 인스턴스 (Serverless 환경에서 재사용)
-let globalServer: McpServer | null = null;
-const transports = new Map<string, StreamableHTTPServerTransport>();
-
-function getOrCreateServer(): McpServer {
-  if (globalServer) return globalServer;
-
+function createServer(): McpServer {
   const server = new McpServer({
     name: "korea-transit-mcp",
     version: "1.0.0",
@@ -218,7 +212,6 @@ function getOrCreateServer(): McpServer {
     }
   );
 
-  globalServer = server;
   return server;
 }
 
@@ -248,34 +241,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // MCP endpoint
+  // MCP endpoint - 각 요청마다 새로운 서버/트랜스포트 생성 (Serverless 호환)
   if (req.method === 'POST') {
     try {
-      const sessionId = (req.headers["mcp-session-id"] as string) ||
-                        (req.headers["x-session-id"] as string) ||
-                        "default-session";
+      const server = createServer();
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => crypto.randomUUID(),
+      });
 
-      let transport = transports.get(sessionId);
+      // 서버를 트랜스포트에 연결
+      await server.connect(transport);
 
-      if (!transport) {
-        transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => sessionId,
-        });
-        transports.set(sessionId, transport);
-
-        const server = getOrCreateServer();
-        await server.connect(transport);
-      }
-
+      // 요청 처리
       await transport.handleRequest(req as any, res as any, req.body);
     } catch (error: any) {
       console.error("MCP Error:", error);
-
-      // 세션 에러 시 리셋
-      if (error.message?.includes("already initialized") || error.message?.includes("not initialized")) {
-        transports.clear();
-        globalServer = null;
-      }
 
       if (!res.headersSent) {
         return res.status(500).json({
@@ -290,8 +270,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // DELETE for session cleanup
   if (req.method === 'DELETE') {
-    const sessionId = (req.headers["mcp-session-id"] as string) || "default-session";
-    transports.delete(sessionId);
     return res.status(200).json({ success: true });
   }
 
