@@ -178,28 +178,34 @@ async function getBusArrival(arsId: string): Promise<string> {
 
 async function searchBusStation(stationName: string): Promise<string> {
   try {
-    const url = `http://ws.bus.go.kr/api/rest/stationinfo/getStationByName?serviceKey=${DATA_GO_KR_API_KEY}&stSrch=${encodeURIComponent(stationName)}&resultType=json`;
-    const response = await axios.get(url, { timeout: 5000 });
-    const items = response.data?.msgBody?.itemList || [];
+    // 서울 열린데이터광장 버스정류소 위치정보 API 사용
+    const url = `http://openapi.seoul.go.kr:8088/${SEOUL_API_KEY}/json/busStopLocationXyInfo/1/1000/`;
+    const response = await axios.get(url, { timeout: 15000 });
 
-    if (items.length === 0) {
-      throw new Error("정류장 없음");
+    const allStations = response.data?.busStopLocationXyInfo?.row || [];
+
+    if (allStations.length === 0) {
+      throw new Error("API 응답 없음");
     }
 
-    const formattedStations = items.slice(0, 10).map((station: any) => ({
-      정류장명: station.stNm,
-      정류장ID: station.arsId,
+    // 정류장 이름으로 필터링
+    const filtered = allStations.filter((station: any) =>
+      station.STOPS_NM?.includes(stationName)
+    );
+
+    if (filtered.length === 0) {
+      return `🔍 '${stationName}' 검색 결과\n\n해당 이름을 포함하는 버스 정류장을 찾을 수 없습니다.\n다른 키워드로 검색해 주세요.`;
+    }
+
+    const formattedStations = filtered.slice(0, 10).map((station: any) => ({
+      정류장명: station.STOPS_NM,
+      정류장번호: station.STOPS_NO,
+      정류장타입: station.STOPS_TYPE || "일반",
     }));
 
-    return `🔍 '${stationName}' 검색 결과\n\n${JSON.stringify(formattedStations, null, 2)}`;
+    return `🔍 '${stationName}' 버스정류장 검색 결과 (${filtered.length}건 중 상위 10건)\n\n${JSON.stringify(formattedStations, null, 2)}`;
   } catch (error: any) {
-    // 샘플 데이터
-    const sampleStations = [
-      { 정류장명: `${stationName}역`, 정류장ID: "12345" },
-      { 정류장명: `${stationName}사거리`, 정류장ID: "12346" },
-      { 정류장명: `${stationName}입구`, 정류장ID: "12347" },
-    ];
-    return `🔍 '${stationName}' 검색 결과 (데모 데이터)\n\n${JSON.stringify(sampleStations, null, 2)}\n\n⚠️ 참고: 공공데이터 API 접속 불가로 데모 데이터를 표시합니다.`;
+    return `🔍 '${stationName}' 검색 실패\n\n⚠️ 오류: ${error.message}\n잠시 후 다시 시도해 주세요.`;
   }
 }
 
