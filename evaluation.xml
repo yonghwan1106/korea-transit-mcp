@@ -1,0 +1,286 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<evaluation>
+  <metadata>
+    <server_name>korea-transit-mcp</server_name>
+    <version>1.0.0</version>
+    <description>서울시 대중교통 실시간 정보 MCP 서버 평가 데이터</description>
+    <created_at>2024-12-31</created_at>
+  </metadata>
+
+  <qa_pairs>
+    <!-- 지하철 도착정보 조회 -->
+    <pair id="1">
+      <category>subway_arrival</category>
+      <input>
+        <tool>transit_get_subway_arrival</tool>
+        <params>
+          <station_name>강남</station_name>
+          <limit>5</limit>
+          <response_format>markdown</response_format>
+        </params>
+      </input>
+      <expected_output>
+        <contains>강남역 실시간 도착정보</contains>
+        <contains>호선</contains>
+        <contains>도착</contains>
+        <format>markdown</format>
+      </expected_output>
+    </pair>
+
+    <!-- 지하철 도착정보 - 역 접미사 처리 -->
+    <pair id="2">
+      <category>subway_arrival</category>
+      <input>
+        <tool>transit_get_subway_arrival</tool>
+        <params>
+          <station_name>홍대입구역</station_name>
+          <response_format>json</response_format>
+        </params>
+      </input>
+      <expected_output>
+        <contains>"station": "홍대입구"</contains>
+        <contains>"line":</contains>
+        <contains>"destination":</contains>
+        <format>json</format>
+      </expected_output>
+    </pair>
+
+    <!-- 지하철 운행상태 조회 -->
+    <pair id="3">
+      <category>subway_status</category>
+      <input>
+        <tool>transit_get_subway_status</tool>
+        <params>
+          <line>2</line>
+          <response_format>markdown</response_format>
+        </params>
+      </input>
+      <expected_output>
+        <contains>2호선</contains>
+        <contains>운행상태</contains>
+        <format>markdown</format>
+      </expected_output>
+    </pair>
+
+    <!-- 버스 도착정보 조회 -->
+    <pair id="4">
+      <category>bus_arrival</category>
+      <input>
+        <tool>transit_get_bus_arrival</tool>
+        <params>
+          <ars_id>16165</ars_id>
+          <limit>5</limit>
+          <response_format>markdown</response_format>
+        </params>
+      </input>
+      <expected_output>
+        <contains>정류장</contains>
+        <contains>버스</contains>
+        <format>markdown</format>
+      </expected_output>
+    </pair>
+
+    <!-- 버스 도착정보 - JSON 형식 -->
+    <pair id="5">
+      <category>bus_arrival</category>
+      <input>
+        <tool>transit_get_bus_arrival</tool>
+        <params>
+          <ars_id>16165</ars_id>
+          <response_format>json</response_format>
+        </params>
+      </input>
+      <expected_output>
+        <contains>"arsId": "16165"</contains>
+        <contains>"busNumber":</contains>
+        <format>json</format>
+      </expected_output>
+    </pair>
+
+    <!-- 버스 정류장 검색 -->
+    <pair id="6">
+      <category>bus_station_search</category>
+      <input>
+        <tool>transit_search_bus_station</tool>
+        <params>
+          <query>강남역</query>
+          <limit>10</limit>
+          <response_format>markdown</response_format>
+        </params>
+      </input>
+      <expected_output>
+        <contains>버스 정류장 검색</contains>
+        <contains>강남</contains>
+        <contains>정류장 번호</contains>
+        <format>markdown</format>
+      </expected_output>
+    </pair>
+
+    <!-- 따릉이 대여소 검색 -->
+    <pair id="7">
+      <category>bike_station</category>
+      <input>
+        <tool>transit_get_bike_station</tool>
+        <params>
+          <query>여의도</query>
+          <limit>5</limit>
+          <response_format>markdown</response_format>
+        </params>
+      </input>
+      <expected_output>
+        <contains>따릉이 대여소</contains>
+        <contains>여의도</contains>
+        <contains>대여 가능</contains>
+        <format>markdown</format>
+      </expected_output>
+    </pair>
+
+    <!-- 따릉이 대여소 - JSON 형식 -->
+    <pair id="8">
+      <category>bike_station</category>
+      <input>
+        <tool>transit_get_bike_station</tool>
+        <params>
+          <query>서울역</query>
+          <response_format>json</response_format>
+        </params>
+      </input>
+      <expected_output>
+        <contains>"query": "서울역"</contains>
+        <contains>"available":</contains>
+        <contains>"rackTotal":</contains>
+        <format>json</format>
+      </expected_output>
+    </pair>
+
+    <!-- 통합 교통정보 조회 -->
+    <pair id="9">
+      <category>combined_transit</category>
+      <input>
+        <tool>transit_get_combined_info</tool>
+        <params>
+          <location>강남역</location>
+          <response_format>markdown</response_format>
+        </params>
+      </input>
+      <expected_output>
+        <contains>주변 교통정보</contains>
+        <contains>지하철</contains>
+        <contains>버스</contains>
+        <contains>따릉이</contains>
+        <format>markdown</format>
+      </expected_output>
+    </pair>
+
+    <!-- 통합 교통정보 - JSON 형식 -->
+    <pair id="10">
+      <category>combined_transit</category>
+      <input>
+        <tool>transit_get_combined_info</tool>
+        <params>
+          <location>홍대입구</location>
+          <response_format>json</response_format>
+        </params>
+      </input>
+      <expected_output>
+        <contains>"location":</contains>
+        <contains>"subway":</contains>
+        <contains>"bus":</contains>
+        <contains>"bike":</contains>
+        <format>json</format>
+      </expected_output>
+    </pair>
+  </qa_pairs>
+
+  <test_scenarios>
+    <scenario id="1">
+      <name>지하철 다중 호선 역 조회</name>
+      <description>여러 호선이 지나가는 역의 도착정보를 조회하여 모든 호선 정보가 포함되는지 확인</description>
+      <tool>transit_get_subway_arrival</tool>
+      <params>
+        <station_name>사당</station_name>
+        <limit>10</limit>
+      </params>
+      <validation>
+        <check>2호선과 4호선 정보가 모두 포함되어야 함</check>
+        <check>각 호선별 상행/하행 정보가 구분되어야 함</check>
+      </validation>
+    </scenario>
+
+    <scenario id="2">
+      <name>버스 정류장 검색 후 도착정보 조회 워크플로우</name>
+      <description>정류장 이름으로 검색한 후 arsId를 사용하여 도착정보를 조회하는 일반적인 사용 시나리오</description>
+      <steps>
+        <step order="1">
+          <tool>transit_search_bus_station</tool>
+          <params><query>시청</query></params>
+          <extract>arsId from first result</extract>
+        </step>
+        <step order="2">
+          <tool>transit_get_bus_arrival</tool>
+          <params><ars_id>extracted_arsId</ars_id></params>
+        </step>
+      </steps>
+      <validation>
+        <check>첫 번째 단계에서 유효한 arsId가 반환되어야 함</check>
+        <check>두 번째 단계에서 해당 정류장의 버스 도착정보가 표시되어야 함</check>
+      </validation>
+    </scenario>
+
+    <scenario id="3">
+      <name>통합 조회로 교통수단 비교</name>
+      <description>특정 위치에서 모든 교통수단 정보를 한번에 조회하여 비교</description>
+      <tool>transit_get_combined_info</tool>
+      <params>
+        <location>잠실역</location>
+        <response_format>json</response_format>
+      </params>
+      <validation>
+        <check>지하철 2호선, 8호선 정보가 포함되어야 함</check>
+        <check>주변 버스 정류장 목록이 포함되어야 함</check>
+        <check>잠실역 인근 따릉이 대여소 정보가 포함되어야 함</check>
+      </validation>
+    </scenario>
+  </test_scenarios>
+
+  <edge_cases>
+    <case id="1">
+      <name>존재하지 않는 역 이름</name>
+      <input>
+        <tool>transit_get_subway_arrival</tool>
+        <params><station_name>가나다라마바사</station_name></params>
+      </input>
+      <expected>에러 메시지 또는 빈 결과 반환</expected>
+    </case>
+
+    <case id="2">
+      <name>잘못된 정류장 ID 형식</name>
+      <input>
+        <tool>transit_get_bus_arrival</tool>
+        <params><ars_id>abc</ars_id></params>
+      </input>
+      <expected>유효성 검사 실패 에러 (5자리 숫자가 아님)</expected>
+    </case>
+
+    <case id="3">
+      <name>빈 검색어</name>
+      <input>
+        <tool>transit_search_bus_station</tool>
+        <params><query></query></params>
+      </input>
+      <expected>최소 2자 이상 필요 에러</expected>
+    </case>
+
+    <case id="4">
+      <name>limit 범위 초과</name>
+      <input>
+        <tool>transit_get_subway_arrival</tool>
+        <params>
+          <station_name>강남</station_name>
+          <limit>100</limit>
+        </params>
+      </input>
+      <expected>최대 20개 제한으로 자동 조정 또는 유효성 에러</expected>
+    </case>
+  </edge_cases>
+</evaluation>

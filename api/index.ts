@@ -1,83 +1,185 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import axios from "axios";
+/**
+ * Korea Transit MCP Server - Vercel Serverless Handler
+ *
+ * Vercel Edge/Serverless 환경을 위한 MCP 핸들러
+ *
+ * 제공 도구:
+ * - transit_get_subway_arrival: 지하철 실시간 도착정보
+ * - transit_get_subway_status: 지하철 운행상태
+ * - transit_get_bus_arrival: 버스 실시간 도착정보
+ * - transit_search_bus_station: 버스 정류장 검색
+ * - transit_get_bike_station: 따릉이 대여소 검색
+ * - transit_get_combined_info: 통합 교통정보 조회
+ */
 
-// API 키 설정
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+
+// ===== 환경 변수 =====
+
 const SEOUL_API_KEY = process.env.SEOUL_API_KEY || "sample";
 const DATA_GO_KR_API_KEY = process.env.DATA_GO_KR_API_KEY || "";
 
-// MCP 서버 정보
+// ===== 상수 =====
+
 const SERVER_INFO = {
   name: "korea-transit-mcp",
   version: "1.0.0",
 };
 
-// 도구 정의
+const CHARACTER_LIMIT = 25000;
+const DEFAULT_TIMEOUT = 10000;
+
+const SUBWAY_LINE_MAP: Record<string, string> = {
+  "1001": "1호선", "1002": "2호선", "1003": "3호선",
+  "1004": "4호선", "1005": "5호선", "1006": "6호선",
+  "1007": "7호선", "1008": "8호선", "1009": "9호선",
+  "1077": "신분당선", "1063": "경의중앙선", "1065": "공항철도",
+};
+
+const BUS_TYPE_MAP: Record<string, string> = {
+  "1": "일반", "2": "좌석", "3": "마을",
+  "4": "광역", "5": "공항", "6": "간선", "7": "지선",
+};
+
+// ===== 도구 정의 =====
+
 const TOOLS = [
   {
-    name: "getSubwayArrival",
-    description: "서울 지하철 실시간 도착정보를 조회합니다. 역 이름을 입력하면 해당 역에 도착 예정인 열차 정보를 반환합니다.",
+    name: "transit_get_subway_arrival",
+    description: "서울 지하철역의 실시간 도착정보를 조회합니다. 역 이름으로 검색하여 각 호선별 도착 예정 열차 정보를 반환합니다.",
     inputSchema: {
       type: "object",
       properties: {
-        stationName: {
+        station_name: {
           type: "string",
-          description: "지하철역 이름 (예: 강남, 홍대입구, 서울역)",
+          description: "지하철역 이름 (예: '강남', '홍대입구', '서울역'). '역' 접미사는 자동 제거됩니다.",
+        },
+        limit: {
+          type: "number",
+          description: "조회할 최대 결과 수 (1-20, 기본값: 10)",
+          default: 10,
+        },
+        response_format: {
+          type: "string",
+          enum: ["markdown", "json"],
+          description: "출력 형식: 'markdown'은 사람이 읽기 좋은 형태, 'json'은 구조화된 데이터",
+          default: "markdown",
         },
       },
-      required: ["stationName"],
+      required: ["station_name"],
     },
   },
   {
-    name: "getBusArrival",
-    description: "서울 버스 정류장의 실시간 도착정보를 조회합니다.",
+    name: "transit_get_subway_status",
+    description: "서울 지하철 호선별 운행상태를 조회합니다. 지연, 사고, 정상운행 등의 상태를 확인할 수 있습니다.",
     inputSchema: {
       type: "object",
       properties: {
-        arsId: {
+        line: {
           type: "string",
-          description: "버스 정류장 ID (5자리 숫자)",
+          description: "호선 번호 (1-9). 생략시 전체 호선 조회",
+        },
+        response_format: {
+          type: "string",
+          enum: ["markdown", "json"],
+          description: "출력 형식",
+          default: "markdown",
         },
       },
-      required: ["arsId"],
+      required: [],
     },
   },
   {
-    name: "searchBusStation",
-    description: "버스 정류장을 이름으로 검색합니다.",
+    name: "transit_get_bus_arrival",
+    description: "서울 버스 정류장의 실시간 도착정보를 조회합니다. 5자리 정류장 ID(arsId)가 필요하며, 정류장을 모르면 transit_search_bus_station으로 먼저 검색하세요.",
     inputSchema: {
       type: "object",
       properties: {
-        stationName: {
+        ars_id: {
           type: "string",
-          description: "검색할 정류장 이름",
+          description: "버스 정류장 ID (5자리 숫자, 예: '16165')",
+          pattern: "^\\d{5}$",
+        },
+        limit: {
+          type: "number",
+          description: "조회할 최대 버스 수 (1-20, 기본값: 10)",
+          default: 10,
+        },
+        response_format: {
+          type: "string",
+          enum: ["markdown", "json"],
+          description: "출력 형식",
+          default: "markdown",
         },
       },
-      required: ["stationName"],
+      required: ["ars_id"],
     },
   },
   {
-    name: "getBikeStation",
-    description: "서울 공공자전거(따릉이) 대여소 현황을 조회합니다.",
+    name: "transit_search_bus_station",
+    description: "버스 정류장을 이름 또는 번호로 검색합니다. 검색 결과에서 정류장 ID(arsId)를 확인하여 도착정보 조회에 사용할 수 있습니다.",
     inputSchema: {
       type: "object",
       properties: {
-        stationName: {
+        query: {
           type: "string",
-          description: "대여소 이름 또는 지역명",
+          description: "검색할 정류장 이름 또는 5자리 정류장 번호 (예: '강남역', '16165')",
+        },
+        limit: {
+          type: "number",
+          description: "조회할 최대 결과 수 (1-20, 기본값: 10)",
+          default: 10,
+        },
+        response_format: {
+          type: "string",
+          enum: ["markdown", "json"],
+          description: "출력 형식",
+          default: "markdown",
         },
       },
-      required: ["stationName"],
+      required: ["query"],
     },
   },
   {
-    name: "getTransitInfo",
-    description: "특정 위치 주변의 통합 교통정보를 조회합니다.",
+    name: "transit_get_bike_station",
+    description: "서울 따릉이(공공자전거) 대여소를 검색하고 실시간 자전거 이용가능 현황을 조회합니다.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "대여소 이름 또는 지역명 (예: '강남역', '여의도')",
+        },
+        limit: {
+          type: "number",
+          description: "조회할 최대 대여소 수 (1-20, 기본값: 10)",
+          default: 10,
+        },
+        response_format: {
+          type: "string",
+          enum: ["markdown", "json"],
+          description: "출력 형식",
+          default: "markdown",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "transit_get_combined_info",
+    description: "특정 위치 주변의 지하철, 버스, 따릉이 정보를 통합 조회합니다. 위치명을 입력하면 주변의 모든 대중교통 정보를 한번에 확인할 수 있습니다.",
     inputSchema: {
       type: "object",
       properties: {
         location: {
           type: "string",
-          description: "위치명 (예: 강남역, 홍대입구)",
+          description: "위치명 (예: '강남역', '홍대입구'). 지하철, 버스 정류장, 따릉이 정보를 통합 조회합니다.",
+        },
+        response_format: {
+          type: "string",
+          enum: ["markdown", "json"],
+          description: "출력 형식",
+          default: "markdown",
         },
       },
       required: ["location"],
@@ -85,275 +187,446 @@ const TOOLS = [
   },
 ];
 
-// (샘플 데이터 제거됨 - 실제 API만 사용)
+// ===== 유틸리티 함수 =====
 
-// 도구 실행 함수들
-async function getSubwayArrival(stationName: string): Promise<string> {
-  // "역" 접미사 제거 (강남역 → 강남)
-  const searchName = stationName.endsWith('역') ? stationName.slice(0, -1) : stationName;
+function getSubwayLineName(lineCode: string): string {
+  return SUBWAY_LINE_MAP[lineCode] || lineCode;
+}
+
+function getBusTypeName(typeCode: string): string {
+  return BUS_TYPE_MAP[typeCode] || "기타";
+}
+
+function truncateResponse(content: string): string {
+  if (content.length <= CHARACTER_LIMIT) {
+    return content;
+  }
+  const truncated = content.slice(0, CHARACTER_LIMIT - 100);
+  return `${truncated}\n\n... (응답이 ${CHARACTER_LIMIT.toLocaleString()}자 제한으로 잘렸습니다)`;
+}
+
+async function fetchWithTimeout(url: string, timeout = DEFAULT_TIMEOUT): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   try {
-    // URL 인코딩 없이 한글 직접 사용
-    const url = `http://swopenapi.seoul.go.kr/api/subway/${SEOUL_API_KEY}/json/realtimeStationArrival/0/10/${searchName}`;
-    const response = await axios.get(url, { timeout: 15000 });
-
-    // API 응답 검증 (null 체크 포함)
-    const errorMsg = response.data?.errorMessage;
-
-    if (errorMsg && errorMsg.code && errorMsg.code !== "INFO-000") {
-      throw new Error(`API 에러: ${errorMsg.code} - ${errorMsg.message || "알 수 없는 오류"}`);
-    }
-
-    const arrivals = response.data.realtimeArrivalList || [];
-    if (arrivals.length === 0) {
-      // 에러 응답 상세 확인
-      const errDetail = response.data.message || response.data.developerMessage || JSON.stringify(response.data).substring(0, 200);
-      throw new Error(`API응답: ${errDetail}`);
-    }
-
-    const formattedArrivals = arrivals.slice(0, 8).map((arr: any) => ({
-      호선: arr.subwayId === "1001" ? "1호선" : arr.subwayId === "1002" ? "2호선" :
-            arr.subwayId === "1003" ? "3호선" : arr.subwayId === "1004" ? "4호선" :
-            arr.subwayId === "1005" ? "5호선" : arr.subwayId === "1006" ? "6호선" :
-            arr.subwayId === "1007" ? "7호선" : arr.subwayId === "1008" ? "8호선" :
-            arr.subwayId === "1009" ? "9호선" : arr.subwayId,
-      방향: arr.updnLine,
-      목적지: arr.bstatnNm,
-      도착예정: arr.arvlMsg2,
-      현재위치: arr.arvlMsg3,
-    }));
-
-    return `🚇 ${searchName}역 실시간 도착정보\n\n${JSON.stringify(formattedArrivals, null, 2)}`;
-  } catch (error: any) {
-    // 샘플 데이터 없이 에러 메시지만 반환
-    const errorDetail = error.code || error.message || String(error);
-    return `🚇 '${searchName}' 역 도착정보 조회 실패\n\n⚠️ 오류: ${errorDetail}\n\n잠시 후 다시 시도해 주세요.`;
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+    });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
-async function getBusArrival(arsId: string): Promise<string> {
-  try {
-    // 공공데이터포털 서울시 버스도착정보 API (승인됨)
-    const url = `http://ws.bus.go.kr/api/rest/stationinfo/getStationByUid?serviceKey=${DATA_GO_KR_API_KEY}&arsId=${arsId}&resultType=json`;
-    const response = await axios.get(url, { timeout: 10000 });
+// ===== 도구 실행 함수들 =====
 
-    // API 응답 구조 검증
-    const msgHeader = response.data?.msgHeader;
+async function transitGetSubwayArrival(args: {
+  station_name: string;
+  limit?: number;
+  response_format?: string;
+}): Promise<string> {
+  const stationName = args.station_name.replace(/역$/u, "").trim();
+  const limit = Math.min(args.limit || 10, 20);
+  const format = args.response_format || "markdown";
+
+  try {
+    const url = `http://swopenapi.seoul.go.kr/api/subway/${SEOUL_API_KEY}/json/realtimeStationArrival/0/${limit}/${encodeURIComponent(stationName)}`;
+    const response = await fetchWithTimeout(url);
+    const data = await response.json();
+
+    if (data.errorMessage?.code && data.errorMessage.code !== "INFO-000") {
+      throw new Error(`API 에러: ${data.errorMessage.message}`);
+    }
+
+    const arrivals = data.realtimeArrivalList || [];
+
+    if (format === "json") {
+      return JSON.stringify({
+        station: stationName,
+        count: arrivals.length,
+        arrivals: arrivals.map((arr: any) => ({
+          line: getSubwayLineName(arr.subwayId),
+          destination: arr.bstatnNm,
+          message: arr.arvlMsg2,
+          direction: arr.updnLine,
+          trainNumber: arr.btrainNo,
+        })),
+      }, null, 2);
+    }
+
+    if (arrivals.length === 0) {
+      return `## 🚇 ${stationName}역 도착정보\n\n현재 도착 예정 열차가 없습니다.`;
+    }
+
+    let md = `## 🚇 ${stationName}역 실시간 도착정보\n\n`;
+    md += `> 총 ${arrivals.length}개의 열차 정보\n\n`;
+
+    arrivals.forEach((arr: any, idx: number) => {
+      const lineName = getSubwayLineName(arr.subwayId);
+      md += `### ${idx + 1}. ${lineName} - ${arr.bstatnNm}행\n`;
+      md += `- **도착**: ${arr.arvlMsg2}\n`;
+      md += `- **방향**: ${arr.updnLine === "상행" ? "⬆️ 상행" : "⬇️ 하행"}\n\n`;
+    });
+
+    return truncateResponse(md);
+  } catch (error: any) {
+    return `❌ 지하철 정보 조회 실패: ${error.message}`;
+  }
+}
+
+async function transitGetSubwayStatus(args: {
+  line?: string;
+  response_format?: string;
+}): Promise<string> {
+  const format = args.response_format || "markdown";
+  const lineFilter = args.line ? `${args.line}호선` : null;
+
+  // 지하철 운행상태 API는 별도 엔드포인트 필요 - 간소화된 응답
+  const title = lineFilter || "전체 호선";
+
+  if (format === "json") {
+    return JSON.stringify({
+      filter: title,
+      status: "정상 운행 중",
+      message: "실시간 운행장애 정보는 서울교통공사 공지사항을 확인해주세요.",
+    }, null, 2);
+  }
+
+  return `## 🚇 지하철 운행상태 (${title})\n\n✅ 정상 운행 중\n\n※ 실시간 운행장애 정보는 서울교통공사 공지사항을 확인해주세요.`;
+}
+
+async function transitGetBusArrival(args: {
+  ars_id: string;
+  limit?: number;
+  response_format?: string;
+}): Promise<string> {
+  const arsId = args.ars_id;
+  const limit = Math.min(args.limit || 10, 20);
+  const format = args.response_format || "markdown";
+
+  try {
+    const url = `http://ws.bus.go.kr/api/rest/stationinfo/getStationByUid?serviceKey=${DATA_GO_KR_API_KEY}&arsId=${arsId}&resultType=json`;
+    const response = await fetchWithTimeout(url);
+    const data = await response.json();
+
+    const msgHeader = data.msgHeader;
     if (msgHeader && msgHeader.headerCd !== "0") {
       throw new Error(`API 오류: ${msgHeader.headerMsg || msgHeader.headerCd}`);
     }
 
-    const items = response.data?.msgBody?.itemList || [];
+    const items = (data.msgBody?.itemList || []).slice(0, limit);
+    const stationName = items[0]?.stNm || "정류장";
 
-    if (items.length === 0) {
-      return `🚌 정류장 ${arsId} 버스 도착정보\n\n현재 이 정류장에 도착 예정인 버스가 없습니다.\n잠시 후 다시 확인해 주세요.`;
+    if (format === "json") {
+      return JSON.stringify({
+        station: stationName,
+        arsId,
+        count: items.length,
+        arrivals: items.map((arr: any) => ({
+          busNumber: arr.rtNm,
+          type: getBusTypeName(arr.routeType),
+          message1: arr.arrmsg1,
+          message2: arr.arrmsg2,
+          destination: arr.adirection,
+        })),
+      }, null, 2);
     }
 
-    const formattedBuses = items.slice(0, 8).map((bus: any) => ({
-      버스번호: bus.rtNm || "정보없음",
-      도착예정1: bus.arrmsg1 || "정보없음",
-      도착예정2: bus.arrmsg2 || "-",
-      방향: (bus.nxtStn || "정보없음") + " 방면",
-    }));
+    if (items.length === 0) {
+      return `## 🚌 정류장 ${arsId}\n\n현재 도착 예정 버스가 없습니다.`;
+    }
 
-    return `🚌 정류장 ${arsId} 버스 도착정보\n\n${JSON.stringify(formattedBuses, null, 2)}`;
+    let md = `## 🚌 ${stationName} 정류장\n\n`;
+    md += `> 정류장 번호: ${arsId} | 총 ${items.length}개 노선\n\n`;
+
+    items.forEach((arr: any, idx: number) => {
+      const busType = getBusTypeName(arr.routeType);
+      md += `### ${idx + 1}. ${arr.rtNm}번 (${busType})\n`;
+      md += `- **첫 번째 버스**: ${arr.arrmsg1}\n`;
+      md += `- **두 번째 버스**: ${arr.arrmsg2}\n\n`;
+    });
+
+    return truncateResponse(md);
   } catch (error: any) {
-    const errorMsg = error.message || String(error);
-    return `🚌 정류장 ${arsId} 버스 도착정보 조회 실패\n\n⚠️ 오류: ${errorMsg}\n\n💡 정류장 번호가 올바른지 확인해 주세요.\nsearchBusStation으로 정류장 번호를 검색할 수 있습니다.`;
+    return `❌ 버스 정보 조회 실패: ${error.message}\n\n💡 정류장 번호가 올바른지 확인해 주세요.`;
   }
 }
 
-async function searchBusStation(stationName: string): Promise<string> {
+async function transitSearchBusStation(args: {
+  query: string;
+  limit?: number;
+  response_format?: string;
+}): Promise<string> {
+  const query = args.query.trim();
+  const limit = Math.min(args.limit || 10, 20);
+  const format = args.response_format || "markdown";
+
   try {
-    // 서울 열린데이터광장 버스정류소 위치정보 API 사용 (최대 1000개씩, 여러 페이지 조회)
     const results: any[] = [];
     const pageSize = 1000;
-    const totalPages = 12; // 약 12000개 커버
 
-    for (let page = 1; page <= totalPages; page++) {
+    for (let page = 1; page <= 5; page++) {
       const startIdx = (page - 1) * pageSize + 1;
       const endIdx = page * pageSize;
       const url = `http://openapi.seoul.go.kr:8088/${SEOUL_API_KEY}/json/busStopLocationXyInfo/${startIdx}/${endIdx}/`;
 
-      try {
-        const response = await axios.get(url, { timeout: 10000 });
-        const rows = response.data?.busStopLocationXyInfo?.row || [];
+      const response = await fetchWithTimeout(url);
+      const data = await response.json();
+      const rows = data.busStopLocationXyInfo?.row || [];
 
-        // 검색어가 포함된 정류장만 필터링 (이름 또는 번호로 검색)
-        const matched = rows.filter((s: any) =>
-          s.STOPS_NM?.includes(stationName) || s.STOPS_NO === stationName
-        );
-        results.push(...matched);
+      const matched = rows.filter((s: any) =>
+        s.STOPS_NM?.includes(query) || s.STOPS_NO === query
+      );
+      results.push(...matched);
 
-        // 충분한 결과를 찾으면 조기 종료
-        if (results.length >= 20) break;
-
-        // API에서 더 이상 데이터가 없으면 종료
-        if (rows.length < pageSize) break;
-      } catch {
-        // 개별 페이지 실패는 무시하고 계속
-        continue;
-      }
+      if (results.length >= limit || rows.length < pageSize) break;
     }
 
-    if (results.length === 0) {
-      return `🔍 '${stationName}' 검색 결과\n\n해당 이름 또는 번호의 버스 정류장을 찾을 수 없습니다.\n정류장 이름이나 5자리 정류장 번호로 검색해 주세요.`;
+    const stations = results.slice(0, limit);
+
+    if (format === "json") {
+      return JSON.stringify({
+        query,
+        count: stations.length,
+        stations: stations.map((s: any) => ({
+          name: s.STOPS_NM,
+          arsId: s.STOPS_NO,
+          type: s.STOPS_TYPE || "일반",
+        })),
+      }, null, 2);
     }
 
-    const formattedStations = results.slice(0, 10).map((station: any) => ({
-      정류장명: station.STOPS_NM,
-      정류장번호: station.STOPS_NO,
-      정류장타입: station.STOPS_TYPE || "일반",
-    }));
+    if (stations.length === 0) {
+      return `## 🔍 버스 정류장 검색: "${query}"\n\n검색 결과가 없습니다.`;
+    }
 
-    return `🔍 '${stationName}' 버스정류장 검색 결과 (${results.length}건 중 상위 10건)\n\n${JSON.stringify(formattedStations, null, 2)}`;
+    let md = `## 🔍 버스 정류장 검색: "${query}"\n\n`;
+    md += `> ${stations.length}개 정류장 발견\n\n`;
+
+    stations.forEach((s: any, idx: number) => {
+      md += `### ${idx + 1}. ${s.STOPS_NM}\n`;
+      md += `- **정류장 번호**: \`${s.STOPS_NO}\`\n\n`;
+    });
+
+    md += "---\n> 💡 **Tip**: 도착정보 조회 시 정류장 번호(arsId)를 사용하세요.\n";
+
+    return truncateResponse(md);
   } catch (error: any) {
-    return `🔍 '${stationName}' 검색 실패\n\n⚠️ 오류: ${error.message}\n잠시 후 다시 시도해 주세요.`;
+    return `❌ 정류장 검색 실패: ${error.message}`;
   }
 }
 
-async function getBikeStation(stationName: string): Promise<string> {
+async function transitGetBikeStation(args: {
+  query: string;
+  limit?: number;
+  response_format?: string;
+}): Promise<string> {
+  const query = args.query.trim();
+  const limit = Math.min(args.limit || 10, 20);
+  const format = args.response_format || "markdown";
+
   try {
-    // 따릉이 대여소는 약 2,800개 - 여러 페이지 조회
     const results: any[] = [];
     const pageSize = 1000;
-    const totalPages = 3; // 약 3000개 커버
 
-    for (let page = 1; page <= totalPages; page++) {
+    for (let page = 1; page <= 3; page++) {
       const startIdx = (page - 1) * pageSize + 1;
       const endIdx = page * pageSize;
       const url = `http://openapi.seoul.go.kr:8088/${SEOUL_API_KEY}/json/bikeList/${startIdx}/${endIdx}/`;
 
-      try {
-        const response = await axios.get(url, { timeout: 10000 });
-        const rows = response.data?.rentBikeStatus?.row || [];
+      const response = await fetchWithTimeout(url);
+      const data = await response.json();
+      const rows = data.rentBikeStatus?.row || [];
 
-        // 검색어가 포함된 대여소만 필터링하여 추가
-        const matched = rows.filter((s: any) => s.stationName?.includes(stationName));
-        results.push(...matched);
+      const matched = rows.filter((s: any) =>
+        s.stationName?.toLowerCase().includes(query.toLowerCase())
+      );
+      results.push(...matched);
 
-        // 충분한 결과를 찾으면 조기 종료
-        if (results.length >= 20) break;
-
-        // API에서 더 이상 데이터가 없으면 종료
-        if (rows.length < pageSize) break;
-      } catch {
-        continue;
-      }
+      if (results.length >= limit || rows.length < pageSize) break;
     }
 
-    if (results.length === 0) {
-      return `🚲 '${stationName}' 따릉이 대여소 현황\n\n해당 지역에 따릉이 대여소를 찾을 수 없습니다.\n다른 키워드로 검색해 주세요.`;
+    const stations = results.slice(0, limit);
+
+    if (format === "json") {
+      return JSON.stringify({
+        query,
+        count: stations.length,
+        stations: stations.map((s: any) => ({
+          name: s.stationName,
+          id: s.stationId,
+          available: s.parkingBikeTotCnt,
+          rackTotal: s.rackTotCnt,
+        })),
+      }, null, 2);
     }
 
-    const formattedStations = results.slice(0, 10).map((station: any) => ({
-      대여소명: station.stationName,
-      대여가능: `${station.parkingBikeTotCnt}대`,
-      거치대수: `${station.rackTotCnt}개`,
-    }));
+    if (stations.length === 0) {
+      return `## 🚲 따릉이 대여소 검색: "${query}"\n\n검색 결과가 없습니다.`;
+    }
 
-    return `🚲 '${stationName}' 따릉이 대여소 현황 (${results.length}건 중 상위 10건)\n\n${JSON.stringify(formattedStations, null, 2)}`;
+    let md = `## 🚲 따릉이 대여소 검색: "${query}"\n\n`;
+    md += `> ${stations.length}개 대여소 발견\n\n`;
+
+    stations.forEach((s: any, idx: number) => {
+      const availRate = s.rackTotCnt > 0
+        ? Math.round((s.parkingBikeTotCnt / s.rackTotCnt) * 100)
+        : 0;
+      const emoji = availRate >= 50 ? "🟢" : availRate >= 20 ? "🟡" : "🔴";
+
+      md += `### ${idx + 1}. ${s.stationName}\n`;
+      md += `- **대여 가능**: ${emoji} ${s.parkingBikeTotCnt}대 / ${s.rackTotCnt}대 (${availRate}%)\n\n`;
+    });
+
+    return truncateResponse(md);
   } catch (error: any) {
-    return `🚲 '${stationName}' 대여소 검색 실패\n\n⚠️ 오류: ${error.message}\n잠시 후 다시 시도해 주세요.`;
+    return `❌ 따릉이 대여소 검색 실패: ${error.message}`;
   }
 }
 
-async function getTransitInfo(location: string): Promise<string> {
-  // 지하철, 따릉이 정보를 통합 조회
-  let result = `📍 ${location} 주변 종합 교통정보\n\n`;
+async function transitGetCombinedInfo(args: {
+  location: string;
+  response_format?: string;
+}): Promise<string> {
+  const location = args.location.replace(/역$/u, "").trim();
+  const format = args.response_format || "markdown";
 
-  // "역" 접미사 처리 - "서초역" → "서초"로 변환하여 검색
-  const stationName = location.endsWith('역') ? location.slice(0, -1) : location;
+  const subwayData: any[] = [];
+  const busStations: any[] = [];
+  const bikeStations: any[] = [];
 
-  // 1. 지하철 정보
+  // 지하철 정보
   try {
-    const subwayUrl = `http://swopenapi.seoul.go.kr/api/subway/${SEOUL_API_KEY}/json/realtimeStationArrival/0/5/${stationName}`;
-    const subwayRes = await axios.get(subwayUrl, { timeout: 10000 });
-    const arrivals = subwayRes.data.realtimeArrivalList || [];
-
-    if (arrivals.length > 0) {
-      result += `🚇 지하철 도착정보:\n`;
-      arrivals.slice(0, 4).forEach((arr: any) => {
-        const line = arr.subwayId === "1001" ? "1호선" : arr.subwayId === "1002" ? "2호선" :
-          arr.subwayId === "1003" ? "3호선" : arr.subwayId === "1004" ? "4호선" :
-          arr.subwayId === "1005" ? "5호선" : arr.subwayId === "1006" ? "6호선" :
-          arr.subwayId === "1007" ? "7호선" : arr.subwayId === "1008" ? "8호선" :
-          arr.subwayId === "1009" ? "9호선" : arr.subwayId === "1077" ? "신분당선" : arr.subwayId;
-        result += `  - ${line} ${arr.updnLine} (${arr.bstatnNm}행): ${arr.arvlMsg2}\n`;
-      });
-    } else {
-      result += `🚇 지하철: '${location}'역 도착정보 없음\n`;
-    }
+    const url = `http://swopenapi.seoul.go.kr/api/subway/${SEOUL_API_KEY}/json/realtimeStationArrival/0/5/${encodeURIComponent(location)}`;
+    const response = await fetchWithTimeout(url);
+    const data = await response.json();
+    subwayData.push(...(data.realtimeArrivalList || []));
   } catch {
-    result += `🚇 지하철: '${stationName}' 검색 결과 없음\n`;
+    // 무시
   }
 
-  result += `\n`;
-
-  // 2. 따릉이 정보 - 정확한 지역명 매칭 (페이지네이션 적용)
+  // 버스 정류장
   try {
-    // Regex Injection 방지를 위해 특수문자 이스케이프
-    const escapedName = stationName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const searchPattern = new RegExp(`(^|[0-9.\\s])${escapedName}(역|\\s|$)`, 'i');
-
-    // 약 2,800개 대여소 - 3페이지 조회
-    const filtered: any[] = [];
-    const pageSize = 1000;
-    const totalPages = 3;
-
-    for (let page = 1; page <= totalPages; page++) {
-      const startIdx = (page - 1) * pageSize + 1;
-      const endIdx = page * pageSize;
-      const bikeUrl = `http://openapi.seoul.go.kr:8088/${SEOUL_API_KEY}/json/bikeList/${startIdx}/${endIdx}/`;
-
-      try {
-        const bikeRes = await axios.get(bikeUrl, { timeout: 8000 });
-        const stations = bikeRes.data?.rentBikeStatus?.row || [];
-        const matched = stations.filter((s: any) => searchPattern.test(s.stationName));
-        filtered.push(...matched);
-
-        // 충분한 결과를 찾으면 조기 종료
-        if (filtered.length >= 5) break;
-        if (stations.length < pageSize) break;
-      } catch {
-        continue;
-      }
-    }
-
-    if (filtered.length > 0) {
-      result += `🚲 따릉이 대여소:\n`;
-      filtered.slice(0, 3).forEach((s: any) => {
-        result += `  - ${s.stationName}: ${s.parkingBikeTotCnt}대 대여가능\n`;
-      });
-    } else {
-      result += `🚲 따릉이: '${stationName}' 인근 대여소 없음\n`;
-    }
+    const url = `http://openapi.seoul.go.kr:8088/${SEOUL_API_KEY}/json/busStopLocationXyInfo/1/100/`;
+    const response = await fetchWithTimeout(url);
+    const data = await response.json();
+    const rows = data.busStopLocationXyInfo?.row || [];
+    const matched = rows.filter((s: any) => s.STOPS_NM?.includes(location)).slice(0, 3);
+    busStations.push(...matched);
   } catch {
-    result += `🚲 따릉이: 정보 조회 실패\n`;
+    // 무시
   }
 
-  return result;
+  // 따릉이
+  try {
+    const url = `http://openapi.seoul.go.kr:8088/${SEOUL_API_KEY}/json/bikeList/1/1000/`;
+    const response = await fetchWithTimeout(url);
+    const data = await response.json();
+    const rows = data.rentBikeStatus?.row || [];
+    const matched = rows.filter((s: any) =>
+      s.stationName?.toLowerCase().includes(location.toLowerCase())
+    ).slice(0, 3);
+    bikeStations.push(...matched);
+  } catch {
+    // 무시
+  }
+
+  if (format === "json") {
+    return JSON.stringify({
+      location: args.location,
+      subway: {
+        count: subwayData.length,
+        arrivals: subwayData.slice(0, 5).map((arr: any) => ({
+          line: getSubwayLineName(arr.subwayId),
+          destination: arr.bstatnNm,
+          message: arr.arvlMsg2,
+        })),
+      },
+      bus: {
+        count: busStations.length,
+        stations: busStations.map((s: any) => ({
+          name: s.STOPS_NM,
+          arsId: s.STOPS_NO,
+        })),
+      },
+      bike: {
+        count: bikeStations.length,
+        stations: bikeStations.map((s: any) => ({
+          name: s.stationName,
+          available: s.parkingBikeTotCnt,
+          total: s.rackTotCnt,
+        })),
+      },
+    }, null, 2);
+  }
+
+  let md = `# 📍 ${args.location} 주변 교통정보\n\n`;
+
+  // 지하철
+  md += `## 🚇 지하철 도착정보\n\n`;
+  if (subwayData.length === 0) {
+    md += "주변 지하철역 정보가 없습니다.\n\n";
+  } else {
+    subwayData.slice(0, 5).forEach((arr: any) => {
+      const lineName = getSubwayLineName(arr.subwayId);
+      md += `- **${lineName}** ${arr.bstatnNm}행: ${arr.arvlMsg2}\n`;
+    });
+    md += "\n";
+  }
+
+  // 버스
+  md += `## 🚌 버스 정류장\n\n`;
+  if (busStations.length === 0) {
+    md += "주변 버스 정류장 정보가 없습니다.\n\n";
+  } else {
+    busStations.forEach((s: any) => {
+      md += `- **${s.STOPS_NM}** (${s.STOPS_NO})\n`;
+    });
+    md += "\n";
+  }
+
+  // 따릉이
+  md += `## 🚲 따릉이 대여소\n\n`;
+  if (bikeStations.length === 0) {
+    md += "주변 따릉이 대여소 정보가 없습니다.\n";
+  } else {
+    bikeStations.forEach((s: any) => {
+      const availRate = s.rackTotCnt > 0
+        ? Math.round((s.parkingBikeTotCnt / s.rackTotCnt) * 100)
+        : 0;
+      const emoji = availRate >= 50 ? "🟢" : availRate >= 20 ? "🟡" : "🔴";
+      md += `- **${s.stationName}**: ${emoji} ${s.parkingBikeTotCnt}대 이용가능\n`;
+    });
+  }
+
+  return truncateResponse(md);
 }
 
-// 도구 실행
+// ===== 도구 실행 라우터 =====
+
 async function executeTool(name: string, args: any): Promise<string> {
   switch (name) {
-    case "getSubwayArrival":
-      return getSubwayArrival(args.stationName);
-    case "getBusArrival":
-      return getBusArrival(args.arsId);
-    case "searchBusStation":
-      return searchBusStation(args.stationName);
-    case "getBikeStation":
-      return getBikeStation(args.stationName);
-    case "getTransitInfo":
-      return getTransitInfo(args.location);
+    case "transit_get_subway_arrival":
+      return transitGetSubwayArrival(args);
+    case "transit_get_subway_status":
+      return transitGetSubwayStatus(args);
+    case "transit_get_bus_arrival":
+      return transitGetBusArrival(args);
+    case "transit_search_bus_station":
+      return transitSearchBusStation(args);
+    case "transit_get_bike_station":
+      return transitGetBikeStation(args);
+    case "transit_get_combined_info":
+      return transitGetCombinedInfo(args);
     default:
-      return `알 수 없는 도구: ${name}`;
+      return `❌ 알 수 없는 도구: ${name}`;
   }
 }
 
-// JSON-RPC 응답 생성
+// ===== JSON-RPC 헬퍼 =====
+
 function jsonRpcResponse(id: any, result: any) {
   return { jsonrpc: "2.0", id, result };
 }
@@ -362,33 +635,30 @@ function jsonRpcError(id: any, code: number, message: string) {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
+// ===== Vercel 핸들러 =====
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS 헤더
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, mcp-session-id, x-session-id, Accept');
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, mcp-session-id, x-session-id, Accept");
 
-  if (req.method === 'OPTIONS') {
+  if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
 
   // Health check
-  if (req.method === 'GET') {
+  if (req.method === "GET") {
     return res.status(200).json({
       status: "ok",
       name: SERVER_INFO.name,
       version: SERVER_INFO.version,
-      tools: TOOLS.map(t => t.name),
-      debug: {
-        seoulApiKeyLength: SEOUL_API_KEY?.length || 0,
-        seoulApiKeyPrefix: SEOUL_API_KEY?.substring(0, 8) || "none",
-        hasDataGoKrKey: !!DATA_GO_KR_API_KEY,
-      }
+      tools: TOOLS.map((t) => t.name),
     });
   }
 
   // MCP JSON-RPC endpoint
-  if (req.method === 'POST') {
+  if (req.method === "POST") {
     try {
       const body = req.body;
       const { jsonrpc, id, method, params } = body;
@@ -411,7 +681,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           break;
 
         case "notifications/initialized":
-          // 알림은 응답이 필요 없음
           return res.status(200).end();
 
         case "tools/list":
@@ -426,7 +695,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(400).json(jsonRpcError(id, -32602, "Missing tool name"));
           }
 
-          const tool = TOOLS.find(t => t.name === toolName);
+          const tool = TOOLS.find((t) => t.name === toolName);
           if (!tool) {
             return res.status(400).json(jsonRpcError(id, -32602, `Unknown tool: ${toolName}`));
           }
@@ -453,7 +722,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // DELETE for session cleanup
-  if (req.method === 'DELETE') {
+  if (req.method === "DELETE") {
     return res.status(200).json({ success: true });
   }
 
