@@ -20,9 +20,19 @@ import dotenv from "dotenv";
 
 import { SERVER_INFO } from "./constants.js";
 import { registerAllTools } from "./tools/index.js";
+import { validateEnvironment, isDevelopment } from "./config.js";
 
 // 환경 변수 로드
 dotenv.config();
+
+// 환경 변수 검증
+try {
+  validateEnvironment();
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`❌ 환경 변수 오류: ${message}`);
+  process.exit(1);
+}
 
 // ===== MCP 서버 생성 =====
 
@@ -126,8 +136,13 @@ function runHttpServer(): void {
   // 서버 시작
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => {
-    console.log(`🚀 ${SERVER_INFO.NAME} v${SERVER_INFO.VERSION} running on port ${PORT}`);
-    console.log(`📍 MCP Endpoint: http://localhost:${PORT}/mcp`);
-    console.log(`❤️ Health Check: http://localhost:${PORT}/health`);
+    // 개발 환경에서만 상세 로그 출력
+    if (isDevelopment()) {
+      console.log(`🚀 ${SERVER_INFO.NAME} v${SERVER_INFO.VERSION} running on port ${PORT}`);
+      console.log(`📍 MCP Endpoint: http://localhost:${PORT}/mcp`);
+      console.log(`❤️ Health Check: http://localhost:${PORT}/health`);
+    } else {
+      console.log(`${SERVER_INFO.NAME} v${SERVER_INFO.VERSION} started on port ${PORT}`);
+    }
   });
 }

@@ -14,10 +14,57 @@
 
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
+// ===== 타입 정의 =====
+
+interface SubwayArrival {
+  subwayId: string;
+  bstatnNm: string;
+  arvlMsg2: string;
+  updnLine: string;
+  btrainNo?: string;
+}
+
+interface BusStation {
+  STOPS_NM: string;
+  STOPS_NO: string;
+  STOPS_TYPE?: string;
+}
+
+interface BikeStation {
+  stationName: string;
+  stationId: string;
+  parkingBikeTotCnt: number;
+  rackTotCnt: number;
+}
+
+interface ToolArguments {
+  station_name?: string;
+  line?: string;
+  ars_id?: string;
+  query?: string;
+  location?: string;
+  limit?: number;
+  response_format?: string;
+}
+
+// ===== 에러 메시지 추출 헬퍼 =====
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
 // ===== 환경 변수 =====
 
-const SEOUL_API_KEY = process.env.SEOUL_API_KEY || "sample";
+const SEOUL_API_KEY = process.env.SEOUL_API_KEY;
 const DATA_GO_KR_API_KEY = process.env.DATA_GO_KR_API_KEY || "";
+
+// 환경 변수 검증
+if (!SEOUL_API_KEY) {
+  console.error("❌ SEOUL_API_KEY 환경 변수가 설정되지 않았습니다.");
+}
 
 // ===== 상수 =====
 
@@ -246,7 +293,7 @@ async function transitGetSubwayArrival(args: {
       return JSON.stringify({
         station: stationName,
         count: arrivals.length,
-        arrivals: arrivals.map((arr: any) => ({
+        arrivals: arrivals.map((arr: SubwayArrival) => ({
           line: getSubwayLineName(arr.subwayId),
           destination: arr.bstatnNm,
           message: arr.arvlMsg2,
@@ -263,7 +310,7 @@ async function transitGetSubwayArrival(args: {
     let md = `## 🚇 ${stationName}역 실시간 도착정보\n\n`;
     md += `> 총 ${arrivals.length}개의 열차 정보\n\n`;
 
-    arrivals.forEach((arr: any, idx: number) => {
+    arrivals.forEach((arr: SubwayArrival, idx: number) => {
       const lineName = getSubwayLineName(arr.subwayId);
       md += `### ${idx + 1}. ${lineName} - ${arr.bstatnNm}행\n`;
       md += `- **도착**: ${arr.arvlMsg2}\n`;
@@ -271,8 +318,8 @@ async function transitGetSubwayArrival(args: {
     });
 
     return truncateResponse(md);
-  } catch (error: any) {
-    return `❌ 지하철 정보 조회 실패: ${error.message}`;
+  } catch (error) {
+    return `❌ 지하철 정보 조회 실패: ${getErrorMessage(error)}`;
   }
 }
 
@@ -336,7 +383,7 @@ async function transitSearchBusStation(args: {
   const format = args.response_format || "markdown";
 
   try {
-    const results: any[] = [];
+    const results: BusStation[] = [];
     const pageSize = 1000;
 
     for (let page = 1; page <= 5; page++) {
@@ -346,9 +393,9 @@ async function transitSearchBusStation(args: {
 
       const response = await fetchWithTimeout(url);
       const data = await response.json();
-      const rows = data.busStopLocationXyInfo?.row || [];
+      const rows: BusStation[] = data.busStopLocationXyInfo?.row || [];
 
-      const matched = rows.filter((s: any) =>
+      const matched = rows.filter((s: BusStation) =>
         s.STOPS_NM?.includes(query) || s.STOPS_NO === query
       );
       results.push(...matched);
@@ -362,7 +409,7 @@ async function transitSearchBusStation(args: {
       return JSON.stringify({
         query,
         count: stations.length,
-        stations: stations.map((s: any) => ({
+        stations: stations.map((s: BusStation) => ({
           name: s.STOPS_NM,
           arsId: s.STOPS_NO,
           type: s.STOPS_TYPE || "일반",
@@ -377,7 +424,7 @@ async function transitSearchBusStation(args: {
     let md = `## 🔍 버스 정류장 검색: "${query}"\n\n`;
     md += `> ${stations.length}개 정류장 발견\n\n`;
 
-    stations.forEach((s: any, idx: number) => {
+    stations.forEach((s: BusStation, idx: number) => {
       md += `### ${idx + 1}. ${s.STOPS_NM}\n`;
       md += `- **정류장 번호**: \`${s.STOPS_NO}\`\n\n`;
     });
@@ -385,8 +432,8 @@ async function transitSearchBusStation(args: {
     md += "---\n> 💡 **Tip**: 도착정보 조회 시 정류장 번호(arsId)를 사용하세요.\n";
 
     return truncateResponse(md);
-  } catch (error: any) {
-    return `❌ 정류장 검색 실패: ${error.message}`;
+  } catch (error) {
+    return `❌ 정류장 검색 실패: ${getErrorMessage(error)}`;
   }
 }
 
@@ -400,7 +447,7 @@ async function transitGetBikeStation(args: {
   const format = args.response_format || "markdown";
 
   try {
-    const results: any[] = [];
+    const results: BikeStation[] = [];
     const pageSize = 1000;
 
     for (let page = 1; page <= 3; page++) {
@@ -410,9 +457,9 @@ async function transitGetBikeStation(args: {
 
       const response = await fetchWithTimeout(url);
       const data = await response.json();
-      const rows = data.rentBikeStatus?.row || [];
+      const rows: BikeStation[] = data.rentBikeStatus?.row || [];
 
-      const matched = rows.filter((s: any) =>
+      const matched = rows.filter((s: BikeStation) =>
         s.stationName?.toLowerCase().includes(query.toLowerCase())
       );
       results.push(...matched);
@@ -426,7 +473,7 @@ async function transitGetBikeStation(args: {
       return JSON.stringify({
         query,
         count: stations.length,
-        stations: stations.map((s: any) => ({
+        stations: stations.map((s: BikeStation) => ({
           name: s.stationName,
           id: s.stationId,
           available: s.parkingBikeTotCnt,
@@ -442,7 +489,7 @@ async function transitGetBikeStation(args: {
     let md = `## 🚲 따릉이 대여소 검색: "${query}"\n\n`;
     md += `> ${stations.length}개 대여소 발견\n\n`;
 
-    stations.forEach((s: any, idx: number) => {
+    stations.forEach((s: BikeStation, idx: number) => {
       const availRate = s.rackTotCnt > 0
         ? Math.round((s.parkingBikeTotCnt / s.rackTotCnt) * 100)
         : 0;
@@ -453,8 +500,8 @@ async function transitGetBikeStation(args: {
     });
 
     return truncateResponse(md);
-  } catch (error: any) {
-    return `❌ 따릉이 대여소 검색 실패: ${error.message}`;
+  } catch (error) {
+    return `❌ 따릉이 대여소 검색 실패: ${getErrorMessage(error)}`;
   }
 }
 
@@ -465,9 +512,9 @@ async function transitGetCombinedInfo(args: {
   const location = args.location.replace(/역$/u, "").trim();
   const format = args.response_format || "markdown";
 
-  const subwayData: any[] = [];
-  const busStations: any[] = [];
-  const bikeStations: any[] = [];
+  const subwayData: SubwayArrival[] = [];
+  const busStations: BusStation[] = [];
+  const bikeStations: BikeStation[] = [];
 
   // 지하철 정보
   try {
@@ -484,8 +531,8 @@ async function transitGetCombinedInfo(args: {
     const url = `http://openapi.seoul.go.kr:8088/${SEOUL_API_KEY}/json/busStopLocationXyInfo/1/100/`;
     const response = await fetchWithTimeout(url);
     const data = await response.json();
-    const rows = data.busStopLocationXyInfo?.row || [];
-    const matched = rows.filter((s: any) => s.STOPS_NM?.includes(location)).slice(0, 3);
+    const rows: BusStation[] = data.busStopLocationXyInfo?.row || [];
+    const matched = rows.filter((s: BusStation) => s.STOPS_NM?.includes(location)).slice(0, 3);
     busStations.push(...matched);
   } catch {
     // 무시
@@ -496,8 +543,8 @@ async function transitGetCombinedInfo(args: {
     const url = `http://openapi.seoul.go.kr:8088/${SEOUL_API_KEY}/json/bikeList/1/1000/`;
     const response = await fetchWithTimeout(url);
     const data = await response.json();
-    const rows = data.rentBikeStatus?.row || [];
-    const matched = rows.filter((s: any) =>
+    const rows: BikeStation[] = data.rentBikeStatus?.row || [];
+    const matched = rows.filter((s: BikeStation) =>
       s.stationName?.toLowerCase().includes(location.toLowerCase())
     ).slice(0, 3);
     bikeStations.push(...matched);
@@ -510,7 +557,7 @@ async function transitGetCombinedInfo(args: {
       location: args.location,
       subway: {
         count: subwayData.length,
-        arrivals: subwayData.slice(0, 5).map((arr: any) => ({
+        arrivals: subwayData.slice(0, 5).map((arr: SubwayArrival) => ({
           line: getSubwayLineName(arr.subwayId),
           destination: arr.bstatnNm,
           message: arr.arvlMsg2,
@@ -518,14 +565,14 @@ async function transitGetCombinedInfo(args: {
       },
       bus: {
         count: busStations.length,
-        stations: busStations.map((s: any) => ({
+        stations: busStations.map((s: BusStation) => ({
           name: s.STOPS_NM,
           arsId: s.STOPS_NO,
         })),
       },
       bike: {
         count: bikeStations.length,
-        stations: bikeStations.map((s: any) => ({
+        stations: bikeStations.map((s: BikeStation) => ({
           name: s.stationName,
           available: s.parkingBikeTotCnt,
           total: s.rackTotCnt,
@@ -541,7 +588,7 @@ async function transitGetCombinedInfo(args: {
   if (subwayData.length === 0) {
     md += "주변 지하철역 정보가 없습니다.\n\n";
   } else {
-    subwayData.slice(0, 5).forEach((arr: any) => {
+    subwayData.slice(0, 5).forEach((arr: SubwayArrival) => {
       const lineName = getSubwayLineName(arr.subwayId);
       md += `- **${lineName}** ${arr.bstatnNm}행: ${arr.arvlMsg2}\n`;
     });
@@ -553,7 +600,7 @@ async function transitGetCombinedInfo(args: {
   if (busStations.length === 0) {
     md += "주변 버스 정류장 정보가 없습니다.\n\n";
   } else {
-    busStations.forEach((s: any) => {
+    busStations.forEach((s: BusStation) => {
       md += `- **${s.STOPS_NM}** (${s.STOPS_NO})\n`;
     });
     md += "\n";
@@ -564,7 +611,7 @@ async function transitGetCombinedInfo(args: {
   if (bikeStations.length === 0) {
     md += "주변 따릉이 대여소 정보가 없습니다.\n";
   } else {
-    bikeStations.forEach((s: any) => {
+    bikeStations.forEach((s: BikeStation) => {
       const availRate = s.rackTotCnt > 0
         ? Math.round((s.parkingBikeTotCnt / s.rackTotCnt) * 100)
         : 0;
@@ -578,20 +625,20 @@ async function transitGetCombinedInfo(args: {
 
 // ===== 도구 실행 라우터 =====
 
-async function executeTool(name: string, args: any): Promise<string> {
+async function executeTool(name: string, args: ToolArguments): Promise<string> {
   switch (name) {
     case "transit_get_subway_arrival":
-      return transitGetSubwayArrival(args);
+      return transitGetSubwayArrival(args as { station_name: string; limit?: number; response_format?: string });
     case "transit_get_subway_status":
-      return transitGetSubwayStatus(args);
+      return transitGetSubwayStatus(args as { line?: string; response_format?: string });
     case "transit_get_bus_arrival":
-      return transitGetBusArrival(args);
+      return transitGetBusArrival(args as { ars_id: string; limit?: number; response_format?: string });
     case "transit_search_bus_station":
-      return transitSearchBusStation(args);
+      return transitSearchBusStation(args as { query: string; limit?: number; response_format?: string });
     case "transit_get_bike_station":
-      return transitGetBikeStation(args);
+      return transitGetBikeStation(args as { query: string; limit?: number; response_format?: string });
     case "transit_get_combined_info":
-      return transitGetCombinedInfo(args);
+      return transitGetCombinedInfo(args as { location: string; response_format?: string });
     default:
       return `❌ 알 수 없는 도구: ${name}`;
   }
@@ -599,11 +646,11 @@ async function executeTool(name: string, args: any): Promise<string> {
 
 // ===== JSON-RPC 헬퍼 =====
 
-function jsonRpcResponse(id: any, result: any) {
+function jsonRpcResponse(id: string | number | null, result: unknown) {
   return { jsonrpc: "2.0", id, result };
 }
 
-function jsonRpcError(id: any, code: number, message: string) {
+function jsonRpcError(id: string | number | null, code: number, message: string) {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
@@ -687,9 +734,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       return res.status(200).json(jsonRpcResponse(id, result));
-    } catch (error: any) {
+    } catch (error) {
       console.error("MCP Error:", error);
-      return res.status(500).json(jsonRpcError(null, -32603, error.message));
+      return res.status(500).json(jsonRpcError(null, -32603, getErrorMessage(error)));
     }
   }
 
